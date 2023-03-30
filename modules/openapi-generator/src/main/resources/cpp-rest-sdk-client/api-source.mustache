@@ -9,6 +9,7 @@
 #include <boost/algorithm/string/replace.hpp>
 
 #include <unordered_set>
+#include <tuple>
 
 {{#apiNamespaceDeclarations}}
 namespace {{this}} {
@@ -51,49 +52,16 @@ pplx::task<{{{returnType}}}{{^returnType}}void{{/returnType}}> {{classname}}::{{
     localVarResponseHttpContentTypes.insert( utility::conversions::to_string_t("{{{mediaType}}}") );
     {{/produces}}
 
+    // Concatinate possible Accept types
     utility::string_t localVarResponseHttpContentType;
-
-    // use JSON if possible
-    if ( localVarResponseHttpContentTypes.size() == 0 )
+    for (auto it = localVarResponseHttpContentTypes.begin(); it != localVarResponseHttpContentTypes.end(); it++)
     {
-        {{#vendorExtensions.x-codegen-response.isString}}
-        localVarResponseHttpContentType = utility::conversions::to_string_t("text/plain");
-        {{/vendorExtensions.x-codegen-response.isString}}
-        {{^vendorExtensions.x-codegen-response.isString}}
-        localVarResponseHttpContentType = utility::conversions::to_string_t("application/json");
-        {{/vendorExtensions.x-codegen-response.isString}}
+        localVarResponseHttpContentType += *it;
+        if (std::next(it) != localVarResponseHttpContentTypes.end())
+        {
+            localVarResponseHttpContentType += ", ";
+        }
     }
-    // JSON
-    else if ( localVarResponseHttpContentTypes.find(utility::conversions::to_string_t("application/json")) != localVarResponseHttpContentTypes.end() )
-    {
-        localVarResponseHttpContentType = utility::conversions::to_string_t("application/json");
-    }
-    // multipart formdata
-    else if( localVarResponseHttpContentTypes.find(utility::conversions::to_string_t("multipart/form-data")) != localVarResponseHttpContentTypes.end() )
-    {
-        localVarResponseHttpContentType = utility::conversions::to_string_t("multipart/form-data");
-    }
-    {{#vendorExtensions.x-codegen-response.isString}}
-    // plain text
-    else if( localVarResponseHttpContentTypes.find(utility::conversions::to_string_t("text/plain")) != localVarResponseHttpContentTypes.end() )
-    {
-        localVarResponseHttpContentType = utility::conversions::to_string_t("text/plain");
-    }
-    {{/vendorExtensions.x-codegen-response.isString}}
-    {{#vendorExtensions.x-codegen-response-ishttpcontent}}
-    else
-    {
-        //It's going to be binary, so just use the first one.
-        localVarResponseHttpContentType = *localVarResponseHttpContentTypes.begin();
-    }
-    {{/vendorExtensions.x-codegen-response-ishttpcontent}}
-    {{^vendorExtensions.x-codegen-response-ishttpcontent}}
-    else
-    {
-        throw ApiException(400, utility::conversions::to_string_t("{{classname}}->{{operationId}} does not produce any supported media type"));
-    }
-    {{/vendorExtensions.x-codegen-response-ishttpcontent}}
-
     localVarHeaderParams[utility::conversions::to_string_t("Accept")] = localVarResponseHttpContentType;
 
     std::unordered_set<utility::string_t> localVarConsumeHttpContentTypes;
@@ -284,31 +252,35 @@ pplx::task<{{{returnType}}}{{^returnType}}void{{/returnType}}> {{classname}}::{{
         }
 
         // check response content type
-        if(localVarResponse.headers().has(utility::conversions::to_string_t("Content-Type")))
+        if (!localVarResponse.headers().has(utility::conversions::to_string_t("Content-Type")))
         {
-            utility::string_t localVarContentType = localVarResponse.headers()[utility::conversions::to_string_t("Content-Type")];
-            if( localVarContentType.find(localVarResponseHttpContentType) == std::string::npos )
-            {
-                throw ApiException(500
-                    , utility::conversions::to_string_t("error calling {{operationId}}: unexpected response type: ") + localVarContentType
-                    , std::make_shared<std::stringstream>(localVarResponse.extract_utf8string(true).get()));
-            }
+            throw ApiException(500
+                , utility::conversions::to_string_t("error calling {{operationId}}: no response type.")
+                , std::make_shared<std::stringstream>(localVarResponse.extract_utf8string(true).get()));
         }
+        
+        utility::string_t localVarContentType = localVarResponse.headers()[utility::conversions::to_string_t("Content-Type")];
 
         {{#vendorExtensions.x-codegen-response-ishttpcontent}}
-        return localVarResponse.extract_vector();
+        return pplx::create_task(localVarResponse.extract_vector()).then([=](std::vector<unsigned char> extractedVector) {
+            return std::make_tuple(extractedVector, localVarContentType);
+        });
     })
-    .then([=](std::vector<unsigned char> localVarResponse)
+    .then([=](std::tuple<std::vector<unsigned char>,utility::string_t> localVarResponse)
     {
+        std::vector<unsigned char> localVarResponseBody;
+        std::tie(localVarResponseBody, std::ignore) = localVarResponse;
         {{{returnType}}} localVarResult = std::make_shared<HttpContent>();
-        std::shared_ptr<std::stringstream> stream = std::make_shared<std::stringstream>(std::string(localVarResponse.begin(), localVarResponse.end()));
+        std::shared_ptr<std::stringstream> stream = std::make_shared<std::stringstream>(std::string(localVarResponseBody.begin(), localVarResponseBody.end()));
         localVarResult->setData(stream);
         return localVarResult;
         {{/vendorExtensions.x-codegen-response-ishttpcontent}}
         {{^vendorExtensions.x-codegen-response-ishttpcontent}}
-        return localVarResponse.extract_string();
+        return pplx::create_task(localVarResponse.extract_string()).then([=](utility::string_t extractedString) {
+            return std::make_tuple(extractedString, localVarContentType);
+        });
     })
-    .then([=](utility::string_t localVarResponse)
+    .then([=](std::tuple<utility::string_t, utility::string_t> localVarResponse)
     {
         {{^returnType}}
         return void();
@@ -321,9 +293,11 @@ pplx::task<{{{returnType}}}{{^returnType}}void{{/returnType}}> {{classname}}::{{
         {{{returnType}}} localVarResult({{{defaultResponse}}});
         {{/returnContainer}}
 
+        utility::string_t localVarResponseBody, localVarResponseHttpContentType;
+        std::tie(localVarResponseBody, localVarResponseHttpContentType) = localVarResponse;
         if(localVarResponseHttpContentType == utility::conversions::to_string_t("application/json"))
         {
-            web::json::value localVarJson = web::json::value::parse(localVarResponse);
+            web::json::value localVarJson = web::json::value::parse(localVarResponseBody);
             {{#isArray}}
             for( auto& localVarItem : localVarJson.as_array() )
             {
