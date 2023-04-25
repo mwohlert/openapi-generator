@@ -283,6 +283,12 @@ pplx::task<{{{returnType}}}{{^returnType}}void{{/returnType}}> {{classname}}::{{
                 , utility::conversions::to_string_t("error calling {{operationId}}: ") + localVarResponse.reason_phrase()
                 , std::make_shared<std::stringstream>(localVarResponse.extract_utf8string(true).get()));
         }
+        
+        {{^returnType}}
+        // Don't check the content type if we don't expect any content
+        return void();
+        {{/returnType}}
+        {{#returnType}}
 
         // check response content type
         if(localVarResponse.headers().has(utility::conversions::to_string_t("Content-Type")))
@@ -311,17 +317,12 @@ pplx::task<{{{returnType}}}{{^returnType}}void{{/returnType}}> {{classname}}::{{
     })
     .then([=](utility::string_t localVarResponse)
     {
-        {{^returnType}}
-        return void();
-        {{/returnType}}
-        {{#returnType}}
         {{#returnContainer}}
         {{{returnType}}} localVarResult;
         {{/returnContainer}}
         {{^returnContainer}}
         {{{returnType}}} localVarResult({{{defaultResponse}}});
         {{/returnContainer}}
-
         if(localVarResponseHttpContentType == utility::conversions::to_string_t("application/json"))
         {
             web::json::value localVarJson = web::json::value::parse(localVarResponse);
@@ -355,8 +356,8 @@ pplx::task<{{{returnType}}}{{^returnType}}void{{/returnType}}> {{classname}}::{{
         }
 
         return localVarResult;
-        {{/returnType}}
         {{/vendorExtensions.x-codegen-response-ishttpcontent}}
+        {{/returnType}}
     });
 }
 {{/operation}}
